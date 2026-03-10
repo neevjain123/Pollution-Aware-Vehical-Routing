@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delhi AQI Route Optimizer</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            width: 100vw;
+            height: 100vh; /* Fills the entire browser window */
+        }
+        .header {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>Eco-Route Optimizer: Delhi</h2>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Initialize the map centered on New Delhi
+        var map = L.map('map').setView([28.6139, 77.2090], 12);
+
+        // Load the map tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        // Variables to store our clicks and drawn lines
+        var clickPoints = [];
+        var mapMarkers = [];
+        var currentRouteLine = null;
+
+        // Listen for user clicks on the map
+        map.on('click', function(e) {
+            // If we already have 2 points, clear the map for a new route
+            if (clickPoints.length >= 2) {
+                clickPoints = [];
+                if (currentRouteLine) map.removeLayer(currentRouteLine);
+                mapMarkers.forEach(marker => map.removeLayer(marker));
+                mapMarkers = [];
+            }
+
+            // Save the clicked coordinates and place a marker
+            var lat = e.latlng.lat;
+            var lon = e.latlng.lng;
+            clickPoints.push([lat, lon]);
+            
+            var newMarker = L.marker([lat, lon]).addTo(map);
+            mapMarkers.push(newMarker);
+
+            // Once the user clicks a second time (Start + End), fetch the route!
+            if (clickPoints.length === 2) {
+                var start = clickPoints[0];
+                var end = clickPoints[1];
+                
+                // Build the URL to talk to our Python backend
+                var apiUrl = `http://127.0.0.1:8000/api/get_route?start_lat=${start[0]}&start_lon=${start[1]}&end_lat=${end[0]}&end_lon=${end[1]}`;
+                
+                console.log("Asking backend for route...");
+
+                // Call the FastAPI server
+                fetch(apiUrl)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === "success") {
+                            // Draw the coordinates returned by Python as a blue line
+                            currentRouteLine = L.polyline(data.path_coordinates, {
+                                color: 'blue',
+                                weight: 5,
+                                opacity: 0.7
+                            }).addTo(map);
+                            
+                            // Zoom the map to fit the newly drawn line
+                            map.fitBounds(currentRouteLine.getBounds());
+                        }
+                    })
+                    .catch(error => {
+                        alert("Error connecting to backend! Is your FastAPI server running?");
+                        console.error(error);
+                    });
+            }
+        });
+    </script>
+</body>
+</html>
