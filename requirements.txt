@@ -1,0 +1,17 @@
+# --- Track 1: Data & Machine Learning ---
+pandas==2.2.1        # For data manipulation and cleaning
+numpy==1.26.4        # For numerical operations
+scikit-learn==1.4.1  # For the Random Forest prediction model
+requests==2.31.0     # For pulling data from weather/AQI APIs
+python-dotenv==1.0.1 # For hiding your API keys
+
+# --- Track 2: Backend & Algorithm Logic ---
+fastapi==0.110.0     # The web framework for your backend
+uvicorn==0.27.1      # The server to run FastAPI
+osmnx==1.9.1         # For downloading street networks
+networkx==3.2.1      # For the graph math and routing algorithms
+psycopg2-binary==2.9.9 # For connecting Python to PostgreSQL
+sqlalchemy==2.0.27   # ORM to make database queries easier
+
+# --- Track 3: General Utilities ---
+pydantic==2.6.3      # For data validation in FastAPI
