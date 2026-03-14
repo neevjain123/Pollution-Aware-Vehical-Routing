@@ -1,3 +1,4 @@
+import os
 import osmnx as ox
 import networkx as nx
 import joblib
@@ -17,6 +18,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- CREATE CACHE DIRECTORY ---
+CACHE_DIR = "graph_cache"
+if not os.path.exists(CACHE_DIR):
+    os.makedirs(CACHE_DIR)
+
+# --- LEVEL 2: IN-MEMORY RAM CACHE ---
+# This holds the street networks in active memory so we don't even read the hard drive!
+RAM_CACHE = {}
+
 # --- LOAD THE AI BRAIN ---
 try:
     aqi_model = joblib.load("../ml_model/xgboost_aqi_model.pkl")
@@ -32,16 +42,29 @@ def read_root():
 @app.get("/api/get_route")
 def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: float):
     try:
+        print(f"\n--- NEW ROUTE REQUEST ---")
         print(f"Calculating route from ({start_lat}, {start_lon}) to ({end_lat}, {end_lon})")
         
-        north = max(start_lat, end_lat) + 0.01
-        south = min(start_lat, end_lat) - 0.01
-        east = max(start_lon, end_lon) + 0.01
-        west = min(start_lon, end_lon) - 0.01
+        # --- THE ENTERPRISE CACHING ENGINE (ENTIRE CITY) ---
+        cache_path = os.path.join(CACHE_DIR, "delhi_master_graph.pkl")
 
-        print("Downloading street network from OpenStreetMap...")
-        G = ox.graph_from_bbox(bbox=(west, south, east, north), network_type='drive')
+        if "delhi" in RAM_CACHE:
+            print("🚀 INSTANT LOAD: Reading entire city from RAM...")
+            G = RAM_CACHE["delhi"]
+        elif os.path.exists(cache_path):
+            print("⚡ FAST LOAD: Reading entire city from Hard Drive...")
+            G = joblib.load(cache_path)
+            RAM_CACHE["delhi"] = G
+        else:
+            print("🐢 MEGA SLOW LOAD (ONCE EVER): Downloading entire map of Delhi...")
+            print("⏳ This will take 30-60 seconds, but you will NEVER have to do it again.")
+            # Downloads a massive 20km radius around central Delhi (Covers Dwarka to Anand Vihar)
+            G = ox.graph_from_point((28.6139, 77.2090), dist=20000, network_type='drive')
+            print("💾 Saving Delhi to Hard Drive and RAM...")
+            joblib.dump(G, cache_path)
+            RAM_CACHE["delhi"] = G
 
+        # --- ASK AI FOR BASE POLLUTION ---
         print("Asking AI for current pollution levels...")
         now = datetime.now()
         current_hour = now.hour
@@ -53,18 +76,16 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
         else:
             predicted_base_aqi = 200.0
 
-        print(f"🤖 AI Predicts current Delhi Base AQI is: {predicted_base_aqi:.2f}")
-
         # --- THE REAL SPATIAL MATH (IDW) ---
         stations = [
-            {"name": "Anand Vihar", "lat": 28.6469, "lon": 77.3159, "aqi": predicted_base_aqi * 1.4}, # Super Dirty
+            {"name": "Anand Vihar", "lat": 28.6469, "lon": 77.3159, "aqi": predicted_base_aqi * 1.4}, 
             {"name": "RK Puram", "lat": 28.5632, "lon": 77.1869, "aqi": predicted_base_aqi * 1.05},
             {"name": "Punjabi Bagh", "lat": 28.6740, "lon": 77.1320, "aqi": predicted_base_aqi * 1.1},
             {"name": "ITO", "lat": 28.6284, "lon": 77.2405, "aqi": predicted_base_aqi * 1.2},
-            {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": predicted_base_aqi * 0.7}   # Super Clean
+            {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": predicted_base_aqi * 0.7}   
         ]
 
-        # 2. Calculate actual pollution and MULTIPLE weights for every street
+        # Calculate actual pollution and MULTIPLE weights for every street
         for u, v, key, data in G.edges(keys=True, data=True):
             u_y, u_x = G.nodes[u]['y'], G.nodes[u]['x']
             v_y, v_x = G.nodes[v]['y'], G.nodes[v]['x']
@@ -84,15 +105,8 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             data['hyper_local_aqi'] = hyper_local_aqi 
             
             # --- THE 3-WAY COST FUNCTION ---
-            # 1. Standard (length) is already built into OSMnx
-            
-            # 2. Balanced Penalty (Will take a small detour for clean air)
-            aqi_penalty_balanced = (hyper_local_aqi / 100.0) ** 2 
-            data['length_balanced'] = data['length'] * aqi_penalty_balanced
-
-            # 3. Extreme Penalty (Will drive to the edge of the city to avoid a red zone)
-            aqi_penalty_extreme = (hyper_local_aqi / 100.0) ** 10 
-            data['length_extreme'] = data['length'] * aqi_penalty_extreme
+            data['length_balanced'] = data['length'] * ((hyper_local_aqi / 100.0) ** 2)
+            data['length_extreme'] = data['length'] * ((hyper_local_aqi / 100.0) ** 10)
 
         orig_node = ox.distance.nearest_nodes(G, X=start_lon, Y=start_lat)
         dest_node = ox.distance.nearest_nodes(G, X=end_lon, Y=end_lat)
@@ -112,8 +126,8 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
                 edge_data = G.get_edge_data(u, v)
                 if edge_data:
                     first_key = list(edge_data.keys())[0]
-                    length = edge_data[first_key]['length']
-                    aqi = edge_data[first_key]['hyper_local_aqi']
+                    length = edge_data[first_key].get('length', 1.0)
+                    aqi = edge_data[first_key].get('hyper_local_aqi', 100.0)
                     total_pollution += (aqi * length)
                     total_distance += length
             return total_pollution / total_distance if total_distance > 0 else 0
@@ -126,7 +140,7 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
                 edge_data = G.get_edge_data(u, v)
                 if edge_data:
                     first_key = list(edge_data.keys())[0]
-                    total_meters += edge_data[first_key]['length']
+                    total_meters += edge_data[first_key].get('length', 1.0)
             return total_meters / 1000.0
 
         # --- EXTRACT ALL DATA ---
@@ -134,6 +148,7 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
         balanced_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in balanced_route]
         extreme_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in extreme_route]
         
+        print("Done! Sending payload to map.\n")
         return {
             "status": "success",
             "message": "3-Way Comparison routes calculated!",
@@ -153,7 +168,8 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
         }
         
     except Exception as e:
-        print(f"Routing error: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "status": "error",
             "message": str(e)
