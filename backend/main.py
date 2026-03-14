@@ -49,9 +49,9 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
 
         if aqi_model:
             input_data = pd.DataFrame({'Hour': [current_hour], 'DayOfWeek': [current_day]})
-            predicted_base_aqi = aqi_model.predict(input_data)[0]
+            predicted_base_aqi = float(aqi_model.predict(input_data)[0])
         else:
-            predicted_base_aqi = 200
+            predicted_base_aqi = 200.0
 
         print(f"🤖 AI Predicts current Delhi Base AQI is: {predicted_base_aqi:.2f}")
 
@@ -64,7 +64,7 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": predicted_base_aqi * 0.7}   # Super Clean
         ]
 
-        # 2. Calculate actual pollution for every single street
+        # 2. Calculate actual pollution and MULTIPLE weights for every street
         for u, v, key, data in G.edges(keys=True, data=True):
             u_y, u_x = G.nodes[u]['y'], G.nodes[u]['x']
             v_y, v_x = G.nodes[v]['y'], G.nodes[v]['x']
@@ -83,20 +83,26 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             hyper_local_aqi = numerator / denominator
             data['hyper_local_aqi'] = hyper_local_aqi 
             
-            # THE FIX: Exponential Penalty to force aggressive routing
-            aqi_penalty = (hyper_local_aqi / 100.0) ** 3 
-            data['aqi_adjusted_length'] = data['length'] * aqi_penalty
+            # --- THE 3-WAY COST FUNCTION ---
+            # 1. Standard (length) is already built into OSMnx
+            
+            # 2. Balanced Penalty (Will take a small detour for clean air)
+            aqi_penalty_balanced = (hyper_local_aqi / 100.0) ** 2 
+            data['length_balanced'] = data['length'] * aqi_penalty_balanced
+
+            # 3. Extreme Penalty (Will drive to the edge of the city to avoid a red zone)
+            aqi_penalty_extreme = (hyper_local_aqi / 100.0) ** 10 
+            data['length_extreme'] = data['length'] * aqi_penalty_extreme
 
         orig_node = ox.distance.nearest_nodes(G, X=start_lon, Y=start_lat)
         dest_node = ox.distance.nearest_nodes(G, X=end_lon, Y=end_lat)
 
-        print("Calculating Standard Shortest path...")
+        print("Calculating 3 distinct paths...")
         shortest_route = nx.shortest_path(G, orig_node, dest_node, weight='length')
-        
-        print("Calculating TD-A* Eco-Friendly path...")
-        eco_route = nx.shortest_path(G, orig_node, dest_node, weight='aqi_adjusted_length')
+        balanced_route = nx.shortest_path(G, orig_node, dest_node, weight='length_balanced')
+        extreme_route = nx.shortest_path(G, orig_node, dest_node, weight='length_extreme')
 
-        # --- THE FIX: LENGTH-WEIGHTED AVERAGE MATH ---
+        # --- MATH HELPER FUNCTIONS ---
         def get_route_aqi(route_nodes):
             total_pollution = 0
             total_distance = 0
@@ -108,11 +114,8 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
                     first_key = list(edge_data.keys())[0]
                     length = edge_data[first_key]['length']
                     aqi = edge_data[first_key]['hyper_local_aqi']
-                    
-                    # Multiply AQI by the physical length of the street
                     total_pollution += (aqi * length)
                     total_distance += length
-            
             return total_pollution / total_distance if total_distance > 0 else 0
 
         def get_route_distance_km(route_nodes):
@@ -126,30 +129,32 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
                     total_meters += edge_data[first_key]['length']
             return total_meters / 1000.0
 
-        avg_shortest_aqi = get_route_aqi(shortest_route)
-        avg_eco_aqi = get_route_aqi(eco_route)
-        
-        shortest_km = get_route_distance_km(shortest_route)
-        eco_km = get_route_distance_km(eco_route)
-
+        # --- EXTRACT ALL DATA ---
         shortest_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in shortest_route]
-        eco_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in eco_route]
+        balanced_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in balanced_route]
+        extreme_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in extreme_route]
         
         return {
             "status": "success",
-            "message": "Comparison routes calculated!",
+            "message": "3-Way Comparison routes calculated!",
+            "stations": stations,
+            
             "shortest_path_coords": shortest_coords,
-            "eco_path_coords": eco_coords,
-            "shortest_aqi": float(round(avg_shortest_aqi, 2)),
-            "eco_aqi": float(round(avg_eco_aqi, 2)),
-            "shortest_km": float(round(shortest_km, 2)),
-            "eco_km": float(round(eco_km, 2))
+            "shortest_aqi": float(round(get_route_aqi(shortest_route), 2)),
+            "shortest_km": float(round(get_route_distance_km(shortest_route), 2)),
+
+            "balanced_path_coords": balanced_coords,
+            "balanced_aqi": float(round(get_route_aqi(balanced_route), 2)),
+            "balanced_km": float(round(get_route_distance_km(balanced_route), 2)),
+
+            "extreme_path_coords": extreme_coords,
+            "extreme_aqi": float(round(get_route_aqi(extreme_route), 2)),
+            "extreme_km": float(round(get_route_distance_km(extreme_route), 2))
         }
         
     except Exception as e:
         print(f"Routing error: {e}")
         return {
             "status": "error",
-            "message": str(e),
-            "path_coordinates": []
+            "message": str(e)
         }
