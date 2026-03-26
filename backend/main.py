@@ -7,8 +7,38 @@ import math
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from fastapi import WebSocket, WebSocketDisconnect
+from typing import List
 
 app = FastAPI(title="Delhi AQI Routing API")
+
+# --- WEBSOCKET CONNECTION MANAGER ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            await connection.send_json(message)
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/map")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text() # Keep connection alive
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +54,6 @@ if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
 # --- LEVEL 2: IN-MEMORY RAM CACHE ---
-# This holds the street networks in active memory so we don't even read the hard drive!
 RAM_CACHE = {}
 
 # --- LOAD THE AI BRAIN ---
@@ -35,17 +64,134 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
     aqi_model = None
 
+# --- TELEMETRY DATA MODEL ---
+class TelemetryData(BaseModel):
+    current_lat: float
+    current_lon: float
+    end_lat: float
+    end_lon: float
+    current_route_cost: float 
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the AI-Powered AQI Routing Backend!"}
 
+# ==============================================================
+# NEW DYNAMIC ROUTING ENDPOINT (THE 15% THRESHOLD LOGIC)
+# ==============================================================
+@app.post("/api/v1/dynamic_route")
+async def dynamic_recalculate(data: TelemetryData):
+    try:
+        # 0. Ensure the map is loaded in RAM
+        if "delhi" not in RAM_CACHE:
+            return {"status": "error", "message": "Map not loaded. Request initial static route first."}
+        G = RAM_CACHE["delhi"]
+
+        # 1. Get exact time and predict new baseline AQI
+        now = datetime.now()
+        current_hour = now.hour
+        current_day = now.weekday()
+        
+        if aqi_model:
+            input_data = pd.DataFrame({'Hour': [current_hour], 'DayOfWeek': [current_day]})
+            new_baseline_aqi = float(aqi_model.predict(input_data)[0])
+        else:
+            new_baseline_aqi = 200.0
+
+        # 2. Update Graph Weights (Real-time IDW calculation)
+        stations = [
+            {"name": "Anand Vihar", "lat": 28.6469, "lon": 77.3159, "aqi": new_baseline_aqi * 1.4}, 
+            {"name": "RK Puram", "lat": 28.5632, "lon": 77.1869, "aqi": new_baseline_aqi * 1.05},
+            {"name": "Punjabi Bagh", "lat": 28.6740, "lon": 77.1320, "aqi": new_baseline_aqi * 1.1},
+            {"name": "ITO", "lat": 28.6284, "lon": 77.2405, "aqi": new_baseline_aqi * 1.2},
+            {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": new_baseline_aqi * 0.7}   
+        ]
+
+        for u, v, key, edge_data in G.edges(keys=True, data=True):
+            u_y, u_x = G.nodes[u]['y'], G.nodes[u]['x']
+            v_y, v_x = G.nodes[v]['y'], G.nodes[v]['x']
+            street_lat = (u_y + v_y) / 2.0
+            street_lon = (u_x + v_x) / 2.0
+
+            numerator, denominator = 0, 0
+            for station in stations:
+                dist = math.sqrt((street_lat - station['lat'])**2 + (street_lon - station['lon'])**2) + 0.0001
+                weight = 1.0 / (dist ** 2)
+                numerator += weight * station['aqi']
+                denominator += weight
+            
+            hyper_local_aqi = numerator / denominator
+            edge_data['hyper_local_aqi'] = hyper_local_aqi 
+            edge_data['length_extreme'] = edge_data['length'] * ((hyper_local_aqi / 100.0) ** 10)
+
+        # 3. Snap current GPS to the nearest OSM node
+        current_node = ox.distance.nearest_nodes(G, X=data.current_lon, Y=data.current_lat)
+        end_node = ox.distance.nearest_nodes(G, X=data.end_lon, Y=data.end_lat)
+
+        # 4. Run Shortest Path on the updated Extreme Eco-Cost from the CAR'S CURRENT LOCATION
+        new_route = nx.shortest_path(G, current_node, end_node, weight='length_extreme')
+        
+        # Calculate the mathematical cost of this new route
+        new_route_cost = 0
+        for i in range(len(new_route) - 1):
+            u = new_route[i]
+            v = new_route[i+1]
+            edge_info = G.get_edge_data(u, v)
+            if edge_info:
+                first_key = list(edge_info.keys())[0]
+                new_route_cost += edge_info[first_key].get('length_extreme', 1.0)
+
+        # 5. THE ROUTE FLAPPING MATH (15% Threshold)
+        THRESHOLD = 0.85 
+
+        if new_route_cost <= (data.current_route_cost * THRESHOLD):
+            new_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in new_route]
+            
+            # --- THE MAGIC WEBSOCKET BROADCAST ---
+            # Tell the connected Leaflet frontend to draw the new neon line!
+            await manager.broadcast({"type": "REROUTE", "coords": new_coords})
+            # -------------------------------------
+
+            return {
+                "status": "REROUTE_TRIGGERED",
+                "message": "Significant AQI drop detected. Rerouting.",
+                "new_baseline": float(new_baseline_aqi),
+                "route_coords": new_coords,
+                "cost": float(new_route_cost)
+            }
+        else:
+            # --- ENTERPRISE FIX: ROAD SNAPPING (Map Matching) ---
+            # Don't trust the car's raw GPS. Snap it to the nearest physical road node!
+            snapped_lat = G.nodes[current_node]['y']
+            snapped_lon = G.nodes[current_node]['x']
+            
+            await manager.broadcast({
+                "type": "LOCATION_UPDATE", 
+                "current_location": [snapped_lat, snapped_lon]
+            })
+            # ----------------------------------------------------
+
+            return {
+                "status": "ROUTE_STABLE",
+                "message": "Current route is still optimal.",
+                "new_baseline": float(new_baseline_aqi),
+                "route_coords": None, 
+                "cost": float(data.current_route_cost)
+            }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+# ==============================================================
+# ORIGINAL STATIC ROUTING ENDPOINT (Runs when map first loads)
+# ==============================================================
 @app.get("/api/get_route")
 def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: float):
     try:
         print(f"\n--- NEW ROUTE REQUEST ---")
-        print(f"Calculating route from ({start_lat}, {start_lon}) to ({end_lat}, {end_lon})")
         
-        # --- THE ENTERPRISE CACHING ENGINE (ENTIRE CITY) ---
         cache_path = os.path.join(CACHE_DIR, "delhi_master_graph.pkl")
 
         if "delhi" in RAM_CACHE:
@@ -56,16 +202,11 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             G = joblib.load(cache_path)
             RAM_CACHE["delhi"] = G
         else:
-            print("🐢 MEGA SLOW LOAD (ONCE EVER): Downloading entire map of Delhi...")
-            print("⏳ This will take 30-60 seconds, but you will NEVER have to do it again.")
-            # Downloads a massive 20km radius around central Delhi (Covers Dwarka to Anand Vihar)
+            print("🐢 MEGA SLOW LOAD: Downloading entire map of Delhi...")
             G = ox.graph_from_point((28.6139, 77.2090), dist=20000, network_type='drive')
-            print("💾 Saving Delhi to Hard Drive and RAM...")
             joblib.dump(G, cache_path)
             RAM_CACHE["delhi"] = G
 
-        # --- ASK AI FOR BASE POLLUTION ---
-        print("Asking AI for current pollution levels...")
         now = datetime.now()
         current_hour = now.hour
         current_day = now.weekday()
@@ -76,7 +217,6 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
         else:
             predicted_base_aqi = 200.0
 
-        # --- THE REAL SPATIAL MATH (IDW) ---
         stations = [
             {"name": "Anand Vihar", "lat": 28.6469, "lon": 77.3159, "aqi": predicted_base_aqi * 1.4}, 
             {"name": "RK Puram", "lat": 28.5632, "lon": 77.1869, "aqi": predicted_base_aqi * 1.05},
@@ -85,16 +225,13 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": predicted_base_aqi * 0.7}   
         ]
 
-        # Calculate actual pollution and MULTIPLE weights for every street
         for u, v, key, data in G.edges(keys=True, data=True):
             u_y, u_x = G.nodes[u]['y'], G.nodes[u]['x']
             v_y, v_x = G.nodes[v]['y'], G.nodes[v]['x']
             street_lat = (u_y + v_y) / 2.0
             street_lon = (u_x + v_x) / 2.0
 
-            numerator = 0
-            denominator = 0
-
+            numerator, denominator = 0, 0
             for station in stations:
                 dist = math.sqrt((street_lat - station['lat'])**2 + (street_lon - station['lon'])**2) + 0.0001
                 weight = 1.0 / (dist ** 2)
@@ -104,25 +241,20 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             hyper_local_aqi = numerator / denominator
             data['hyper_local_aqi'] = hyper_local_aqi 
             
-            # --- THE 3-WAY COST FUNCTION ---
             data['length_balanced'] = data['length'] * ((hyper_local_aqi / 100.0) ** 2)
             data['length_extreme'] = data['length'] * ((hyper_local_aqi / 100.0) ** 10)
 
         orig_node = ox.distance.nearest_nodes(G, X=start_lon, Y=start_lat)
         dest_node = ox.distance.nearest_nodes(G, X=end_lon, Y=end_lat)
 
-        print("Calculating 3 distinct paths...")
         shortest_route = nx.shortest_path(G, orig_node, dest_node, weight='length')
         balanced_route = nx.shortest_path(G, orig_node, dest_node, weight='length_balanced')
         extreme_route = nx.shortest_path(G, orig_node, dest_node, weight='length_extreme')
 
-        # --- MATH HELPER FUNCTIONS ---
         def get_route_aqi(route_nodes):
-            total_pollution = 0
-            total_distance = 0
+            total_pollution, total_distance = 0, 0
             for i in range(len(route_nodes) - 1):
-                u = route_nodes[i]
-                v = route_nodes[i+1]
+                u, v = route_nodes[i], route_nodes[i+1]
                 edge_data = G.get_edge_data(u, v)
                 if edge_data:
                     first_key = list(edge_data.keys())[0]
@@ -135,20 +267,17 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
         def get_route_distance_km(route_nodes):
             total_meters = 0
             for i in range(len(route_nodes) - 1):
-                u = route_nodes[i]
-                v = route_nodes[i+1]
+                u, v = route_nodes[i], route_nodes[i+1]
                 edge_data = G.get_edge_data(u, v)
                 if edge_data:
                     first_key = list(edge_data.keys())[0]
                     total_meters += edge_data[first_key].get('length', 1.0)
             return total_meters / 1000.0
 
-        # --- EXTRACT ALL DATA ---
         shortest_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in shortest_route]
         balanced_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in balanced_route]
         extreme_coords = [[G.nodes[n]['y'], G.nodes[n]['x']] for n in extreme_route]
         
-        print("Done! Sending payload to map.\n")
         return {
             "status": "success",
             "message": "3-Way Comparison routes calculated!",
@@ -170,7 +299,4 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        return {"status": "error", "message": str(e)}
