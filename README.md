@@ -1,4 +1,4 @@
-# 🌍 Delhi AQI Route Optimizer (Pollution-Aware Navigation)
+# 🌍 Pollution Aware Vehical Routing
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Production_Ready-009688.svg)
@@ -7,7 +7,7 @@
 ![Leaflet.js](https://img.shields.io/badge/Leaflet.js-Interactive_Maps-lightgreen.svg)
 
 ## 📌 Overview
-The **Delhi AQI Route Optimizer** is a multi-objective spatial routing engine designed to minimize human exposure to hyper-local air pollution. Unlike standard GPS systems that optimize purely for time or distance, this engine calculates optimal paths using a custom A* algorithm that dynamically reacts to **live wind physics**, **predictive pollution baselines**, and the **biological respiratory rates** of different transport modes.
+The **Pollution Aware Vehical Routing** is a multi-objective spatial routing engine designed to minimize human exposure to hyper-local air pollution. Unlike standard GPS systems that optimize purely for time or distance, this engine calculates optimal paths using a custom A* algorithm that dynamically reacts to **live wind physics**, **predictive pollution baselines**, and the **biological respiratory rates** of different transport modes.
 
 This project was engineered to solve a real-world problem in New Delhi, demonstrating complex graph mathematics, machine learning validation, real-time telemetry, and full-stack integration.
 
@@ -38,15 +38,21 @@ To ensure the safety and accuracy of the routing engine, the predictive models w
 
 ### Overfitting Mitigation (Learning Curve)
 Initial training iterations exhibited high variance. By applying strict regularization techniques—specifically reducing `max_depth` to 3, lowering the learning rate to `0.05`, and introducing stochastic feature subsampling (`subsample=0.8`)—the model successfully converges without memorizing the dataset.
-*<p align="center">*(Insert your learning_curve.png here)*</p>*
+<p align="center">
+  <img src="ml_model/learning_curve.png" width="700" alt="Learning Curve">
+</p>
 
 ### Classification Accuracy & Confusion Matrix
 To evaluate routing safety, the continuous AQI predictions were tested against a binary threshold (AQI > 150 = Toxic). By engineering new spatial-temporal features (`Is_Weekend`, `Traffic_Peak`) and applying `scale_pos_weight` to handle class imbalances, the XGBoost Classifier effectively distinguishes between safe and hazardous routes.
-*<p align="center">*(Insert your confusion_matrix.png here)*</p>*
+<p align="center">
+  <img src="ml_model/confusion_matrix.png" width="600" alt="Confusion Matrix">
+</p>
 
 ### Actual vs. Predicted (The Physics Justification)
 The regression scatter plot highlights the mathematical ceiling of pure historical data. Because the AI relies on temporal averages, it struggles to predict extreme, random meteorological anomalies. **This specific limitation is the core justification for our Live Wind Physics Engine**, which actively corrects these machine-learning blind spots in real-time using live API telemetry.
-*<p align="center">*(Insert your actual_vs_predicted.png here)*</p>*
+<p align="center">
+  <img src="ml_model/actual_vs_predicted.png" width="600" alt="Actual vs Predicted">
+</p>
 
 ---
 
