@@ -1,4 +1,4 @@
-# 🌍 Pollution Aware Vehical Routing
+# 🌍 Pollution Aware Vehicle Routing
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Production_Ready-009688.svg)
@@ -7,7 +7,7 @@
 ![Leaflet.js](https://img.shields.io/badge/Leaflet.js-Interactive_Maps-lightgreen.svg)
 
 ## 📌 Overview
-The **Pollution Aware Vehical Routing** is a multi-objective spatial routing engine designed to minimize human exposure to hyper-local air pollution. Unlike standard GPS systems that optimize purely for time or distance, this engine calculates optimal paths using a custom A* algorithm that dynamically reacts to **live wind physics**, **predictive pollution baselines**, and the **biological respiratory rates** of different transport modes.
+The **Pollution Aware Vehicle Routing** is a multi-objective spatial routing engine designed to minimize human exposure to hyper-local air pollution. Unlike standard GPS systems that optimize purely for time or distance, this engine calculates optimal paths using a custom A* algorithm that dynamically reacts to **live wind physics**, **predictive pollution baselines**, and the **biological respiratory rates** of different transport modes.
 
 This project was engineered to solve a real-world problem in New Delhi, demonstrating complex graph mathematics, machine learning validation, real-time telemetry, and full-stack integration.
 
@@ -85,5 +85,5 @@ By trading a marginal increase in total travel distance, the Proposed Model succ
 
 **1. Clone the repository**
 ```bash
-git clone [https://github.com/YOUR_USERNAME/aqi_routing.git](https://github.com/YOUR_USERNAME/aqi_routing.git)
-cd aqi_routing
+git clone [https://github.com/neevjain123/Pollution-Aware-Vehicle-Routing.git](https://github.com/neevjain123/Pollution-Aware-Vehicle-Routing.git)
+cd Pollution-Aware-Vehicle-Routing
