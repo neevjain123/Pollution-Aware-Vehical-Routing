@@ -8,104 +8,351 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: Arial, sans-serif;
-        }
-        #map {
-            width: 100vw;
-            height: 100vh; /* Fills the entire browser window */
-        }
-        .header {
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        
+        
+        .search-container {
             position: absolute;
-            top: 10px;
-            left: 50px;
+            top: 20px;
+            left: 20px;
             z-index: 1000;
             background: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            width: 320px;
         }
+        
+        h3 { margin-top: 0; margin-bottom: 15px; color: #333; }
+        
+        .legend { font-size: 12px; margin-bottom: 15px; display: flex; justify-content: space-between;}
+        .legend span { display: flex; align-items: center; }
+        .dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        
+        input {
+            width: 90%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        button:hover { background-color: #1a252f; }
+
+        .btn-sim {
+            background-color: #00ffcc;
+            color: #111;
+            margin-top: 10px;
+            display: none; 
+        }
+        .btn-sim:hover { background-color: #00ccaa; }
+        
+        
+        #stats-panel { margin-top: 15px; font-size: 13px; }
+        .route-stat { background: #f8f9fa; padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid #ccc; }
+        .stat-standard { border-color: #ff3333; }
+        .stat-balanced { border-color: #3366ff; }
+        .stat-extreme { border-color: #00ff33; }
+        .bold { font-weight: bold; }
+
+        
+        #telemetry-hud {
+            margin-top: 15px;
+            padding: 12px;
+            background: #111;
+            color: #00ffcc;
+            font-weight: bold;
+            text-align: center;
+            border-radius: 6px;
+            border: 1px solid #00ffcc;
+            font-size: 12px;
+            letter-spacing: 1px;
+        }
+
+        
+        #weather-hud {
+            margin-top: 10px;
+            padding: 10px;
+            background: #111;
+            color: #fff;
+            border-radius: 6px;
+            font-size: 13px;
+            border: 1px solid #555;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .wind-arrow { font-size: 18px; color: #00ffcc; display: inline-block; transition: transform 1s ease-in-out; }
+        
+        /* --- CAR MARKER --- */
+        .car-marker { font-size: 24px; line-height: 24px; text-align: center; }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <h2>Eco-Route Optimizer: Delhi</h2>
+    <div class="search-container">
+        <h3>Eco-Route Optimizer</h3>
+        
+        <div class="legend">
+            <span><div class="dot" style="background:#ff3333;"></div> Standard</span>
+            <span><div class="dot" style="background:#3366ff;"></div> Balanced</span>
+            <span><div class="dot" style="background:#00ff33;"></div> Extreme</span>
+        </div>
+
+        <input type="text" id="start" placeholder="Start (e.g., India Gate)">
+        <input type="text" id="end" placeholder="Destination (e.g., Vaishali)">
+        
+        <select id="transport-mode" style="width: 96%; padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc;">
+            <option value="car">🚗 Car (AC Cabin)</option>
+            <option value="walk">🚶 Pedestrian (High Exposure Time)</option>
+            <option value="bike">🚴 Cyclist (High Respiration Rate)</option>
+        </select>
+        
+        <button onclick="calculateRoutes()">Get Directions</button>
+        <button id="sim-btn" class="btn-sim" onclick="startSimulation()">🚗 Start Live Simulation</button>
+
+        <div id="stats-panel"></div>
+
+        <div id="telemetry-hud">📡 TELEMETRY: WAITING...</div>
+
+        <div id="weather-hud">
+            <span>🌬️ Wind: Fetching...</span>
+            <span class="wind-arrow" id="wind-icon">⬆</span>
+        </div>
     </div>
 
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <script>
-        // Initialize the map centered on New Delhi
-        var map = L.map('map').setView([28.6139, 77.2090], 12);
 
-        // Load the map tiles
+    <script>
+        
+        var map = L.map('map').setView([28.6139, 77.2090], 12);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap'
+            attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // Variables to store our clicks and drawn lines
-        var clickPoints = [];
-        var mapMarkers = [];
-        var currentRouteLine = null;
+        var standardRouteLine, balancedRouteLine, extremeRouteLine, dynamicRouteLine, carMarker;
+        var heatCircles = [];
+        
+        
+        var extremeCoordsArray = [];
+        var simInterval = null;
+        var simIndex = 0;
+        var currentDynamicCost = 999999999999; // Arbitrary high start cost
 
-        // Listen for user clicks on the map
-        map.on('click', function(e) {
-            // If we already have 2 points, clear the map for a new route
-            if (clickPoints.length >= 2) {
-                clickPoints = [];
-                if (currentRouteLine) map.removeLayer(currentRouteLine);
-                mapMarkers.forEach(marker => map.removeLayer(marker));
-                mapMarkers = [];
+        
+        var ws = new WebSocket("ws://127.0.0.1:8000/ws/map");
+        var telemetryHud = document.getElementById("telemetry-hud");
+
+        ws.onopen = function() {
+            telemetryHud.innerText = "📡 TELEMETRY: CONNECTED";
+            telemetryHud.style.color = "#00ffcc";
+            telemetryHud.style.borderColor = "#00ffcc";
+        };
+
+        ws.onmessage = function(event) {
+            var data = JSON.parse(event.data);
+            
+            if (data.type === "REROUTE") {
+                telemetryHud.innerText = "🚨 ALERT: REROUTING!";
+                telemetryHud.style.color = "#ffeb3b"; 
+                telemetryHud.style.borderColor = "#ffeb3b";
+
+                if (dynamicRouteLine) map.removeLayer(dynamicRouteLine);
+                if (carMarker) map.removeLayer(carMarker);
+
+                dynamicRouteLine = L.polyline(data.coords, {
+                    color: '#00ffff', weight: 8, opacity: 0.9, dashArray: '15, 10'
+                }).addTo(map);
+
+                var carIcon = L.divIcon({ html: '🚗', className: 'car-marker', iconSize: [30, 30], iconAnchor: [15, 15] });
+                carMarker = L.marker(data.coords[0], {icon: carIcon}).addTo(map);
+
+                
+                extremeCoordsArray = data.coords;
+                simIndex = 1; 
+
+                setTimeout(() => { 
+                    telemetryHud.innerText = "📡 TELEMETRY: ROUTE STABLE";
+                    telemetryHud.style.color = "#00ffcc";
+                    telemetryHud.style.borderColor = "#00ffcc";
+                }, 3000);
+            } 
+            else if (data.type === "LOCATION_UPDATE") {
+                if (carMarker) carMarker.setLatLng(data.current_location);
+            }
+        };
+
+        ws.onclose = function() {
+            telemetryHud.innerText = "❌ TELEMETRY: OFFLINE";
+            telemetryHud.style.color = "#ff3333";
+            telemetryHud.style.borderColor = "#ff3333";
+        };
+
+        
+        async function getCoordinates(query) {
+            
+            var finalQuery = query.includes(",") ? query : query + ", Delhi, India";
+            var safeQuery = encodeURIComponent(finalQuery);
+
+            var res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${safeQuery}&limit=1`);
+            var data = await res.json();
+            
+            if(data.length > 0) {
+                return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+            }
+            alert(`Could not find location: ${finalQuery}. Try adding the city name!`);
+            return null;
+        }
+
+        async function calculateRoutes() {
+            document.getElementById('stats-panel').innerHTML = "<i>Analyzing spatial graph & AQI...</i>";
+            clearTimeout(simInterval); // Stop any running simulation
+            document.getElementById('sim-btn').style.display = "none";
+            
+            var startText = document.getElementById('start').value;
+            var endText = document.getElementById('end').value;
+            var mode = document.getElementById('transport-mode').value;
+
+            var startCoords = await getCoordinates(startText);
+            var endCoords = await getCoordinates(endText);
+
+            if(!startCoords || !endCoords) {
+                document.getElementById('stats-panel').innerHTML = "";
+                return;
             }
 
-            // Save the clicked coordinates and place a marker
-            var lat = e.latlng.lat;
-            var lon = e.latlng.lng;
-            clickPoints.push([lat, lon]);
-            
-            var newMarker = L.marker([lat, lon]).addTo(map);
-            mapMarkers.push(newMarker);
+            var apiUrl = `http://127.0.0.1:8000/api/get_route?start_lat=${startCoords.lat}&start_lon=${startCoords.lon}&end_lat=${endCoords.lat}&end_lon=${endCoords.lon}&mode=${mode}`;
 
-            // Once the user clicks a second time (Start + End), fetch the route!
-            if (clickPoints.length === 2) {
-                var start = clickPoints[0];
-                var end = clickPoints[1];
-                
-                // Build the URL to talk to our Python backend
-                var apiUrl = `http://127.0.0.1:8000/api/get_route?start_lat=${start[0]}&start_lon=${start[1]}&end_lat=${end[0]}&end_lon=${end[1]}`;
-                
-                console.log("Asking backend for route...");
+            try {
+                var response = await fetch(apiUrl);
+                var data = await response.json();
 
-                // Call the FastAPI server
-                fetch(apiUrl)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === "success") {
-                            // Draw the coordinates returned by Python as a blue line
-                            currentRouteLine = L.polyline(data.path_coordinates, {
-                                color: 'blue',
-                                weight: 5,
-                                opacity: 0.7
-                            }).addTo(map);
-                            
-                            // Zoom the map to fit the newly drawn line
-                            map.fitBounds(currentRouteLine.getBounds());
-                        }
-                    })
-                    .catch(error => {
-                        alert("Error connecting to backend! Is your FastAPI server running?");
-                        console.error(error);
+                if (data.status === "success") {
+                    
+                    if (standardRouteLine) map.removeLayer(standardRouteLine);
+                    if (balancedRouteLine) map.removeLayer(balancedRouteLine);
+                    if (extremeRouteLine) map.removeLayer(extremeRouteLine);
+                    if (dynamicRouteLine) map.removeLayer(dynamicRouteLine);
+                    if (carMarker) map.removeLayer(carMarker);
+                    heatCircles.forEach(c => map.removeLayer(c));
+                    heatCircles = [];
+
+                    
+                    extremeCoordsArray = data.extreme_path_coords;
+                    document.getElementById('sim-btn').style.display = "block"; // Show button
+
+                    data.stations.forEach(station => {
+                        var color = station.aqi > 300 ? '#ff3333' : (station.aqi > 200 ? '#ffaa00' : '#ffcc00');
+                        var calculatedRadius = 400 + (station.aqi * 1.5);
+
+                        var circle = L.circle([station.lat, station.lon], {
+                            color: 'transparent', fillColor: color, fillOpacity: 0.35, radius: calculatedRadius 
+                        }).addTo(map);
+                        circle.bindPopup(`<b>${station.name}</b><br>AQI: ${Math.round(station.aqi)}`);
+                        heatCircles.push(circle);
                     });
+
+                    standardRouteLine = L.polyline(data.shortest_path_coords, { color: '#ff3333', weight: 6, opacity: 0.6 }).addTo(map);
+                    balancedRouteLine = L.polyline(data.balanced_path_coords, { color: '#3366ff', weight: 6, opacity: 0.8 }).addTo(map);
+                    extremeRouteLine = L.polyline(data.extreme_path_coords, { color: '#00ff33', weight: 8, opacity: 1.0 }).addTo(map);
+
+                    map.fitBounds(extremeRouteLine.getBounds());
+
+                    document.getElementById('stats-panel').innerHTML = `
+                        <div class="route-stat stat-standard">🔴 <b>Standard Route</b><br>Distance: ${data.shortest_km} km | Avg AQI: <span class="bold">${data.shortest_aqi}</span></div>
+                        <div class="route-stat stat-balanced">🔵 <b>Balanced Eco</b><br>Distance: ${data.balanced_km} km | Avg AQI: <span class="bold">${data.balanced_aqi}</span></div>
+                        <div class="route-stat stat-extreme">🟢 <b>Extreme Eco</b><br>Distance: ${data.extreme_km} km | Avg AQI: <span class="bold">${data.extreme_aqi}</span></div>
+                    `;
+
+                    if (data.wind_data) {
+                        var blowingToDeg = (data.wind_data.direction_deg + 180) % 360; 
+                        document.getElementById('weather-hud').innerHTML = `
+                            <span>🌬️ Wind: ${data.wind_data.speed_kmh} km/h</span>
+                            <span class="wind-arrow" style="transform: rotate(${blowingToDeg}deg);">⬆</span>
+                        `;
+                    }
+                } else { alert("Error: " + data.message); }
+            } catch (error) { document.getElementById('stats-panel').innerHTML = "<b style='color:red;'>Failed to connect backend.</b>"; }
+        }
+
+        
+        
+        async function startSimulation() {
+            if (!extremeCoordsArray || extremeCoordsArray.length === 0) return;
+            
+            document.getElementById('sim-btn').style.display = "none";
+            simIndex = 0;
+            currentDynamicCost = 999999999999; 
+            
+            var carIcon = L.divIcon({ html: '🚗', className: 'car-marker', iconSize: [30, 30], iconAnchor: [15, 15] });
+            carMarker = L.marker(extremeCoordsArray[0], {icon: carIcon}).addTo(map);
+            telemetryHud.innerText = "🚗 DRIVING ROUTE...";
+
+            
+            async function driveStep() {
+                if (simIndex >= extremeCoordsArray.length) {
+                    telemetryHud.innerText = "🏁 DESTINATION REACHED";
+                    telemetryHud.style.color = "#00ff33";
+                    telemetryHud.style.borderColor = "#00ff33";
+                    return;
+                }
+
+                var currentLoc = extremeCoordsArray[simIndex];
+                var endLoc = extremeCoordsArray[extremeCoordsArray.length - 1];
+                var mode = document.getElementById('transport-mode').value;
+
+                
+                carMarker.setLatLng(currentLoc);
+
+                try {
+                    var res = await fetch("http://127.0.0.1:8000/api/v1/dynamic_route", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            current_lat: currentLoc[0],
+                            current_lon: currentLoc[1],
+                            end_lat: endLoc[0],
+                            end_lon: endLoc[1],
+                            current_route_cost: currentDynamicCost,
+                            mode: mode
+                        })
+                    });
+                    var backendData = await res.json();
+                    
+                    
+                    if(backendData.cost && backendData.status === "ROUTE_STABLE") {
+                        currentDynamicCost = backendData.cost; 
+                    }
+                } catch (e) { console.error("Telemetry Error:", e); }
+
+                simIndex++;
+                
+                
+            }
+
+            driveStep(); 
+        }
+        
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter') {
+                calculateRoutes();
             }
         });
+        
     </script>
 </body>
 </html>

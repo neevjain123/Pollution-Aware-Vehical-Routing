@@ -4,7 +4,7 @@ import time
 API_URL_DYNAMIC = "http://127.0.0.1:8000/api/v1/dynamic_route"
 API_URL_STATIC = "http://127.0.0.1:8000/api/get_route"
 
-# We use the exact start and end from your UI testing
+
 start_coord = {"lat": 28.6139, "lon": 77.2090} # India Gate
 end_coord = {"lat": 28.6469, "lon": 77.3159}   # Anand Vihar
 
@@ -12,7 +12,7 @@ print("=====================================================")
 print("🚗 STARTING PRECISION TELEMETRY SIMULATOR 🚗")
 print("=====================================================\n")
 
-# 1. WARM UP AND STEAL THE ROUTE
+
 print("⏳ Fetching the exact AI-calculated route...")
 warmup_params = {
     "start_lat": start_coord["lat"],
@@ -29,14 +29,13 @@ try:
         print("❌ Error getting route:", data.get("message"))
         exit()
         
-    # THE FIX: Extract the exact spatial nodes from the Green (Extreme) Route
-    # The backend returns them as [lat, lon], so we format them for our simulator
+    
     exact_route_coords = [{"lat": coord[0], "lon": coord[1]} for coord in data["extreme_path_coords"]]
     
-    # We don't want to ping the server 500 times, so we take every 15th node to simulate driving speed
+    
     mock_gps_path = exact_route_coords[::15] 
     
-    # Ensure the final destination is always the last tick
+    
     mock_gps_path.append(end_coord)
     
     print(f"✅ Route locked! Extracted {len(mock_gps_path)} precision waypoints to drive.\n")
@@ -45,7 +44,7 @@ except Exception as e:
     print(f"❌ Server offline. Is Uvicorn running? Error: {e}")
     exit()
 
-# 2. START THE DRIVE
+
 current_expected_cost = 999999999999.0 
 
 for i, position in enumerate(mock_gps_path):

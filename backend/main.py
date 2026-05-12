@@ -4,7 +4,7 @@ import networkx as nx
 import joblib
 import pandas as pd
 import math
-import requests # <-- ADDED FOR OPENWEATHER API
+import requests 
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,7 @@ from typing import List
 
 app = FastAPI(title="Delhi AQI Routing API")
 
-# --- WEBSOCKET CONNECTION MANAGER ---
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -68,24 +68,21 @@ class TelemetryData(BaseModel):
     end_lat: float
     end_lon: float
     current_route_cost: float 
-    mode: str = "car"  # <-- NEW: Dynamic endpoint now accepts mode 
+    mode: str = "car"  
 
-# ==============================================================
-# LIVE OPENWEATHER PHYSICS ENGINE
-# ==============================================================
 def get_live_wind_data():
     try:
-        # YOUR LIVE OPENWEATHER API KEY
+        
         API_KEY = "e08ed3f2fca35361d9656b15ca10cc82" 
         
-        # Central Delhi Coordinates
+        
         url = f"https://api.openweathermap.org/data/2.5/weather?lat=28.6139&lon=77.2090&appid={API_KEY}&units=metric"
         
-        # 3-second timeout so the routing doesn't freeze if the internet drops
+        
         res = requests.get(url, timeout=3) 
         data = res.json()
         
-        # OpenWeather returns meters/second. Multiply by 3.6 to get km/h.
+        
         speed_kmh = data['wind']['speed'] * 3.6
         direction_deg = data['wind']['deg']
         
@@ -107,9 +104,7 @@ def calculate_directional_weight(station_lat, station_lon, street_lat, street_lo
     base_weight = 1.0 / (dist ** 2)
     return base_weight * directional_multiplier
 
-# ==============================================================
-# DYNAMIC ROUTING ENDPOINT (WEBSOCKETS)
-# ==============================================================
+
 @app.post("/api/v1/dynamic_route")
 async def dynamic_recalculate(data: TelemetryData):
     try:
@@ -132,7 +127,7 @@ async def dynamic_recalculate(data: TelemetryData):
             {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": new_baseline_aqi * 0.7}   
         ]
 
-        # GRAB LIVE WIND
+        
         wind_data = get_live_wind_data()
 
         for u, v, key, edge_data in G.edges(keys=True, data=True):
@@ -154,19 +149,19 @@ async def dynamic_recalculate(data: TelemetryData):
             raw_length = edge_data.get('length', 1.0)
             edge_length = sum(raw_length) if isinstance(raw_length, list) else float(raw_length)
 
-            # --- THE EXPONENTIAL BIOLOGICAL FIX ---
+            
             mode_exponent = 5.0
             if data.mode == "bike":
-                mode_exponent = 10.0  # Massive exponential penalty for cyclists
+                mode_exponent = 10.0  
             elif data.mode == "walk":
-                mode_exponent = 7.0   # Medium penalty for pedestrians
+                mode_exponent = 7.0   
 
             G[u][v][key]['hyper_local_aqi'] = hyper_local_aqi 
             G[u][v][key]['length_balanced'] = edge_length * ((hyper_local_aqi / 50.0) ** 2)
             
-            # Apply the mode directly to the power curve!
+            
             G[u][v][key]['length_extreme'] = edge_length * ((hyper_local_aqi / 50.0) ** mode_exponent)
-            # --------------------------------------
+            
         current_node = ox.distance.nearest_nodes(G, X=data.current_lon, Y=data.current_lat)
         end_node = ox.distance.nearest_nodes(G, X=data.end_lon, Y=data.end_lat)
 
@@ -191,7 +186,7 @@ async def dynamic_recalculate(data: TelemetryData):
                 "new_baseline": float(new_baseline_aqi),
                 "route_coords": new_coords,
                 "cost": float(new_route_cost),
-                "wind_data": wind_data # <-- SENT TO FRONTEND
+                "wind_data": wind_data 
             }
         else:
             snapped_lat = G.nodes[current_node]['y']
@@ -206,7 +201,7 @@ async def dynamic_recalculate(data: TelemetryData):
                 "new_baseline": float(new_baseline_aqi),
                 "route_coords": None, 
                 "cost": float(data.current_route_cost),
-                "wind_data": wind_data # <-- SENT TO FRONTEND
+                "wind_data": wind_data 
             }
 
     except Exception as e:
@@ -214,9 +209,7 @@ async def dynamic_recalculate(data: TelemetryData):
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
-# ==============================================================
-# STATIC ROUTING ENDPOINT (INITIAL LOAD)
-# ==============================================================
+
 @app.get("/api/get_route")
 def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: float, mode: str= "car"):
     try:
@@ -255,7 +248,7 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             {"name": "Dwarka", "lat": 28.5791, "lon": 77.0753, "aqi": predicted_base_aqi * 0.7}   
         ]
 
-        # GRAB LIVE WIND
+        
         wind_data = get_live_wind_data()
 
         for u, v, key, edge_data in G.edges(keys=True, data=True):
@@ -277,19 +270,19 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             raw_length = edge_data.get('length', 1.0)
             edge_length = sum(raw_length) if isinstance(raw_length, list) else float(raw_length)
 
-            # --- THE EXPONENTIAL BIOLOGICAL FIX ---
+            
             mode_exponent = 5.0
             if mode == "bike":
-                mode_exponent = 10.0  # Massive exponential penalty for cyclists
+                mode_exponent = 10.0  
             elif mode == "walk":
-                mode_exponent = 7.0   # Medium penalty for pedestrians
+                mode_exponent = 7.0   
 
             G[u][v][key]['hyper_local_aqi'] = hyper_local_aqi 
             G[u][v][key]['length_balanced'] = edge_length * ((hyper_local_aqi / 50.0) ** 2)
             
-            # Apply the mode directly to the power curve!
+            
             G[u][v][key]['length_extreme'] = edge_length * ((hyper_local_aqi / 50.0) ** mode_exponent)
-            # --------------------------------------
+            
         orig_node = ox.distance.nearest_nodes(G, X=start_lon, Y=start_lat)
         dest_node = ox.distance.nearest_nodes(G, X=end_lon, Y=end_lat)
 
@@ -326,7 +319,7 @@ def get_real_route(start_lat: float, start_lon: float, end_lat: float, end_lon: 
             "status": "success",
             "message": "3-Way Comparison routes calculated!",
             "stations": stations,
-            "wind_data": wind_data, # <-- SENT TO FRONTEND
+            "wind_data": wind_data, 
             
             "shortest_path_coords": [[G.nodes[n]['y'], G.nodes[n]['x']] for n in shortest_route],
             "shortest_aqi": float(round(get_route_aqi(shortest_route), 2)),
